@@ -169,53 +169,66 @@ async function mine(e) {
     return;
   }
 
-  miningBusy = true;
-
+  // Make the button respond immediately
   const btn = $("mineBtn");
 
+  btn.classList.remove("pop");
+  void btn.offsetWidth;
+  btn.classList.add("pop");
+
+  const rect = btn.getBoundingClientRect();
+
+  const r = document.createElement("span");
+  r.className = "float";
+  r.textContent = "+" + fmt(state.rate);
+
+  r.style.left =
+    (e?.clientX || rect.left + rect.width / 2) + "px";
+
+  r.style.top =
+    (e?.clientY || rect.top + rect.height / 2) + "px";
+
+  document.body.appendChild(r);
+
+  setTimeout(() => r.remove(), 700);
+
+  // Update the UI immediately
+  state.energy -= 1;
+  state.balance += state.rate;
+  state.taps += 1;
+
+  render();
+
+  // Send the mining action to the server
+  // without making the button wait for the response.
   try {
-    const result = await api("/api/mine", {
+    await api("/api/mine", {
       method: "POST"
     });
 
-    applyPlayer(result.player);
+    // Get the server's actual state afterwards.
+    const current = await api("/api/state", {
+      method: "POST"
+    });
 
-    const gain =
-      Number(
-        result.player?.mining_power ??
-        state.rate
-      );
-
+    applyPlayer(current.player);
     render();
 
-    btn.classList.remove("pop");
-    void btn.offsetWidth;
-    btn.classList.add("pop");
-
-    const r = document.createElement("span");
-    r.className = "float";
-    r.textContent = "+" + fmt(gain);
-
-    const rect = btn.getBoundingClientRect();
-
-    r.style.left =
-      (e?.clientX ||
-       rect.left + rect.width / 2) + "px";
-
-    r.style.top =
-      (e?.clientY ||
-       rect.top + rect.height / 2) + "px";
-
-    document.body.appendChild(r);
-
-    setTimeout(() => r.remove(), 700);
-
-  } catch(err) {
+  } catch (err) {
     console.error(err);
-    toast(err.message || "Mining failed");
 
-  } finally {
-    miningBusy = false;
+    // Refresh from server if the request failed.
+    try {
+      const current = await api("/api/state", {
+        method: "POST"
+      });
+
+      applyPlayer(current.player);
+      render();
+
+    } catch (_) {
+      toast("Connection problem");
+    }
   }
 }
 
