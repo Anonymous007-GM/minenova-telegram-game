@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="theme-color" content="#07111f">
+  <title>MineNova</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">✦</div>
+        <div>
+          <div class="brand-name">MineNova</div>
+          <div class="brand-sub">Deep Space Mining</div>
+        </div>
+      </div>
+      <button class="avatar" id="profileBtn">👤</button>
+    </header>
+
+    <main>
+      <section id="mine" class="screen active">
+        <div class="balance-card">
+          <div class="balance-label">NOVA BALANCE</div>
+          <div class="balance" id="balance">0</div>
+          <div class="rate"><span>⚡</span> <b id="rate">1</b> NOVA / tap</div>
+        </div>
+
+        <div class="mine-stage">
+          <div class="orbit orbit-a"></div>
+          <div class="orbit orbit-b"></div>
+          <button class="core" id="mineBtn" aria-label="Mine">
+            <span class="core-glow"></span>
+            <span class="core-icon">⛏</span>
+            <span class="core-text">MINE</span>
+          </button>
+        </div>
+
+        <div class="energy-box">
+          <div class="energy-head">
+            <span>ENERGY</span>
+            <b><span id="energy">1000</span> / <span id="maxEnergy">1000</span></b>
+          </div>
+          <div class="progress"><i id="energyBar"></i></div>
+          <div class="energy-foot"><span>+<span id="regen">3</span>/sec</span><button id="fullEnergyBtn">⚡ Refill</button></div>
+        </div>
+
+        <div class="quick-grid">
+          <button class="quick" data-go="boost"><span>🚀</span><b>Boost</b><small>Power up</small></button>
+          <button class="quick" data-go="upgrade"><span>🔧</span><b>Upgrade</b><small>Mine faster</small></button>
+          <button class="quick" data-go="tasks"><span>🎯</span><b>Tasks</b><small>Earn extras</small></button>
+        </div>
+      </section>
+
+      <section id="upgrade" class="screen">
+        <div class="section-title"><h2>Upgrades</h2><p>Build a stronger mining rig.</p></div>
+        <div id="upgradeList" class="list"></div>
+      </section>
+
+      <section id="boost" class="screen">
+        <div class="section-title"><h2>Boost Lab</h2><p>Temporary power for big mining runs.</p></div>
+        <div id="boostList" class="boost-grid"></div>
+      </section>
+
+      <section id="tasks" class="screen">
+        <div class="section-title"><h2>Mission Board</h2><p>Complete missions and collect NOVA.</p></div>
+        <div id="taskList" class="list"></div>
+      </section>
+
+      <section id="friends" class="screen">
+        <div class="invite-card">
+          <div class="invite-icon">👥</div>
+          <h2>Build your crew</h2>
+          <p>Invite friends and receive a bonus when they join.</p>
+          <div class="invite-code" id="inviteLink">Loading…</div>
+          <button class="primary" id="copyInvite">Copy invite link</button>
+        </div>
+        <div class="stat-row"><div><b id="refCount">0</b><span>Friends</span></div><div><b id="refEarned">0</b><span>Earned</span></div></div>
+      </section>
+
+      <section id="rank" class="screen">
+        <div class="section-title"><h2>Leaderboard</h2><p>Top miners this season.</p></div>
+        <div id="leaderboard" class="leaderboard"></div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button class="nav active" data-go="mine"><span>⛏️</span><small>Mine</small></button>
+      <button class="nav" data-go="upgrade"><span>🔧</span><small>Upgrade</small></button>
+      <button class="nav" data-go="boost"><span>🚀</span><small>Boost</small></button>
+      <button class="nav" data-go="friends"><span>👥</span><small>Friends</small></button>
+      <button class="nav" data-go="rank"><span>🏆</span><small>Rank</small></button>
+    </nav>
+
+    <div id="toast" class="toast"></div>
+    <div id="profileModal" class="modal hidden">
+      <div class="modal-card">
+        <button class="close" id="closeModal">×</button>
+        <div class="profile-avatar" id="profileAvatar">👤</div>
+        <h2 id="profileName">Miner</h2>
+        <p id="profileUsername">@miner</p>
+        <div class="profile-stats"><div><b id="profileBalance">0</b><span>NOVA</span></div><div><b id="profileTaps">0</b><span>Taps</span></div></div>
+      </div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

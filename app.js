@@ -1,0 +1,147 @@
+const tg = window.Telegram?.WebApp;
+if (tg) {
+  tg.ready();
+  tg.expand();
+  try { tg.setHeaderColor("#07111f"); tg.setBackgroundColor("#07111f"); } catch(e) {}
+}
+
+const KEY = "minenova_demo_v1";
+const defaultState = {
+  balance: 1250, energy: 1000, maxEnergy: 1000, rate: 1, regen: 3,
+  taps: 0, refs: 0, refEarned: 0, upgrades: {power:0, battery:0, regen:0},
+  claimedTasks: [], lastDaily: 0, boost: {mult:1, until:0}
+};
+let state = {...defaultState, ...(JSON.parse(localStorage.getItem(KEY) || "{}"))};
+state.upgrades = {...defaultState.upgrades, ...(state.upgrades || {})};
+state.boost = {...defaultState.boost, ...(state.boost || {})};
+
+const $ = id => document.getElementById(id);
+const fmt = n => Math.floor(n).toLocaleString();
+function save(){ localStorage.setItem(KEY, JSON.stringify(state)); }
+function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(window.__toast); window.__toast=setTimeout(()=>t.classList.remove("show"),1600); }
+function activeMult(){ return Date.now() < state.boost.until ? state.boost.mult : 1; }
+function render(){
+  $("balance").textContent=fmt(state.balance);
+  $("rate").textContent=fmt(state.rate * activeMult());
+  $("energy").textContent=fmt(state.energy);
+  $("maxEnergy").textContent=fmt(state.maxEnergy);
+  $("regen").textContent=fmt(state.regen);
+  $("energyBar").style.width=Math.max(0,state.energy/state.maxEnergy*100)+"%";
+  $("refCount").textContent=fmt(state.refs);
+  $("refEarned").textContent=fmt(state.refEarned);
+  $("profileBalance").textContent=fmt(state.balance);
+  $("profileTaps").textContent=fmt(state.taps);
+  renderUpgrades(); renderBoosts(); renderTasks(); renderLeaderboard();
+}
+function mine(e){
+  if(state.energy < 1){ toast("Not enough energy"); return; }
+  const gain = state.rate * activeMult();
+  state.balance += gain; state.energy -= 1; state.taps += 1; save(); render();
+  const btn=$("mineBtn"); btn.classList.remove("pop"); void btn.offsetWidth; btn.classList.add("pop");
+  const r=document.createElement("span"); r.className="float"; r.textContent="+"+fmt(gain);
+  const rect=btn.getBoundingClientRect(); r.style.left=(e?.clientX || rect.left+rect.width/2)+"px"; r.style.top=(e?.clientY || rect.top+rect.height/2)+"px";
+  document.body.appendChild(r); setTimeout(()=>r.remove(),700);
+}
+$("mineBtn").addEventListener("click",mine);
+$("fullEnergyBtn").addEventListener("click",()=>{ if(state.balance<100){toast("Need 100 NOVA");return;} state.balance-=100; state.energy=state.maxEnergy; save();render();toast("Energy refilled"); });
+
+function upgradeCost(type){
+  const lvl=state.upgrades[type];
+  const base={power:150,battery:400,regen:300}[type];
+  return Math.floor(base*Math.pow(1.65,lvl));
+}
+const upgradeData=[
+  ["power","⛏️","Mining Power","Increase NOVA earned per tap.","rate"],
+  ["battery","🔋","Energy Tank","Increase maximum energy by 100.","maxEnergy"],
+  ["regen","💧","Auto Regen","Recover 1 extra energy every second.","regen"]
+];
+function renderUpgrades(){
+  $("upgradeList").innerHTML=upgradeData.map(([type,icon,name,desc])=>{
+    const lvl=state.upgrades[type], cost=upgradeCost(type);
+    return `<div class="item"><div class="item-icon">${icon}</div><div class="item-main"><b>${name} · Lv.${lvl}</b><small>${desc}</small></div><button onclick="buyUpgrade('${type}')" ${state.balance<cost?'disabled':''}>${fmt(cost)} NOVA</button></div>`;
+  }).join("");
+}
+window.buyUpgrade = type => {
+  const cost=upgradeCost(type); if(state.balance<cost)return toast("Not enough NOVA");
+  state.balance-=cost; state.upgrades[type]++;
+  if(type==="power") state.rate++;
+  if(type==="battery"){state.maxEnergy+=100;state.energy+=100;}
+  if(type==="regen") state.regen++;
+  save();render();toast("Upgrade installed");
+};
+
+const boosts=[
+  ["turbo","⚡","Turbo Drill","5× mining power for 30 seconds.",5,30,250],
+  ["overdrive","🔥","Overdrive","10× mining power for 15 seconds.",10,15,600],
+  ["refill","🔋","Energy Surge","Instantly refill your energy.",1,0,150]
+];
+function renderBoosts(){
+  $("boostList").innerHTML=boosts.map(([id,icon,name,desc,mult,sec,cost])=>
+    `<div class="boost"><div class="boost-top"><div class="boost-icon">${icon}</div><b>${fmt(cost)} NOVA</b></div><h3>${name}</h3><p>${desc}</p><button onclick="useBoost('${id}')">${id==="refill"?"ACTIVATE":"ACTIVATE BOOST"}</button></div>`).join("");
+}
+window.useBoost=id=>{
+  const b=boosts.find(x=>x[0]===id); if(state.balance<b[6])return toast("Not enough NOVA");
+  state.balance-=b[6];
+  if(id==="refill") state.energy=state.maxEnergy;
+  else state.boost={mult:b[4],until:Date.now()+b[5]*1000};
+  save();render();toast(id==="refill"?"Energy restored":"Boost activated!");
+};
+
+const tasks=[
+  ["daily","📅","Daily Miner","Mine 100 times today.",100,()=>state.taps>=100],
+  ["rich","💎","Reach 5,000 NOVA","Build your first serious stash.",300,()=>state.balance>=5000],
+  ["power","🔧","Upgrade your rig","Purchase any upgrade.",250,()=>Object.values(state.upgrades).some(v=>v>0)]
+];
+function renderTasks(){
+  $("taskList").innerHTML=tasks.map(([id,icon,name,desc,reward,done])=>{
+    const claimed=state.claimedTasks.includes(id), ready=done();
+    return `<div class="item"><div class="item-icon">${icon}</div><div class="item-main"><b>${name}</b><small>${desc} · +${reward} NOVA</small></div><button onclick="claimTask('${id}')" ${claimed||!ready?'disabled':''}>${claimed?"CLAIMED":ready?"CLAIM":"LOCKED"}</button></div>`;
+  }).join("");
+}
+window.claimTask=id=>{
+  const t=tasks.find(x=>x[0]===id); if(!t||state.claimedTasks.includes(id)||!t[5]())return;
+  state.claimedTasks.push(id);state.balance+=t[4];save();render();toast("Mission reward collected");
+};
+
+function renderLeaderboard(){
+  const meName = tg?.initDataUnsafe?.user?.first_name || "You";
+  const names=["NovaPilot","AstroMiner","LunarFox","PixelDrill","OrbitMax","CosmoTap","StarForge"];
+  const rows=names.map((n,i)=>({n,score:[98200,76100,65300,52100,44400,39100,31200][i]}));
+  rows.push({n:meName,score:state.balance});
+  rows.sort((a,b)=>b.score-a.score);
+  $("leaderboard").innerHTML=rows.slice(0,10).map((r,i)=>`<div class="rank-row"><div class="rank-num">${i+1}</div><div class="rank-avatar">${i<3?["🥇","🥈","🥉"][i]:"⛏️"}</div><div class="rank-user"><b>${escapeHtml(r.n)}</b><small>${i<3?"Elite miner":"Miner"}</small></div><div class="rank-score">${fmt(r.score)}</div></div>`).join("");
+}
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+
+function openScreen(id){
+  document.querySelectorAll(".screen").forEach(x=>x.classList.toggle("active",x.id===id));
+  document.querySelectorAll(".nav").forEach(x=>x.classList.toggle("active",x.dataset.go===id));
+  if(id==="tasks") renderTasks();
+}
+document.querySelectorAll("[data-go]").forEach(b=>b.addEventListener("click",()=>openScreen(b.dataset.go)));
+
+function profile(){
+  const u=tg?.initDataUnsafe?.user;
+  $("profileName").textContent=u?.first_name || "Miner";
+  $("profileUsername").textContent=u?.username?("@"+u.username):"Telegram Miner";
+  $("profileAvatar").textContent=u?.emoji_status_custom_emoji_id?"✦":"👤";
+  $("profileModal").classList.remove("hidden");
+}
+$("profileBtn").onclick=profile; $("closeModal").onclick=()=>$("profileModal").classList.add("hidden");
+$("profileModal").onclick=e=>{if(e.target.id==="profileModal")$("profileModal").classList.add("hidden")};
+
+function inviteLink(){
+  const bot = tg?.initDataUnsafe?.user ? "YOUR_BOT_USERNAME" : "YOUR_BOT_USERNAME";
+  $("inviteLink").textContent=`https://t.me/${bot}?start=ref_demo`;
+}
+$("copyInvite").onclick=async()=>{try{await navigator.clipboard.writeText($("inviteLink").textContent);toast("Invite link copied")}catch(e){toast("Copy failed")}};
+
+setInterval(()=>{
+  if(state.energy<state.maxEnergy){state.energy=Math.min(state.maxEnergy,state.energy+state.regen);save();render();}
+  if(state.boost.until && Date.now()>state.boost.until){state.boost={mult:1,until:0};save();render();}
+},1000);
+
+if(!state.lastDaily || Date.now()-state.lastDaily>86400000){
+  state.balance+=500; state.lastDaily=Date.now(); save(); setTimeout(()=>toast("Daily bonus: +500 NOVA"),600);
+}
+inviteLink(); render();
