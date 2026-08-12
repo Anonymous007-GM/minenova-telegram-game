@@ -148,19 +148,32 @@ async function watchAdForReward() {
     Math.random().toString(36).slice(2, 10);
 
   try {
-  toast("Loading advertisement...");
+    toast("Loading advertisement...");
 
-  await show_11559295({
-    ymid: ymid,
-    requestVar: "mining_reward"
-  });
+    await show_11559295({
+      ymid: ymid,
+      requestVar: "mining_reward"
+    });
 
-  toast("Ad completed! Reward is being processed...");
+    toast("Ad completed! Checking reward...");
 
-} catch (err) {
-  console.error("Monetag:", err);
-  toast("Ad skipped or unavailable");
-}
+    // Give Monetag postback a little time to reach our server.
+    await new Promise(resolve => setTimeout(resolve, 2500));
+
+    // Get the real balance from Supabase.
+    const current = await api("/api/state", {
+      method: "POST"
+    });
+
+    applyPlayer(current.player);
+    render();
+
+    toast("Balance updated! 🎉");
+
+  } catch (err) {
+    console.error("Monetag:", err);
+    toast("Ad skipped or unavailable");
+  }
 }
 function render() {
   $("balance").textContent = fmt(state.balance);
@@ -733,4 +746,5 @@ setInterval(() => {
 
 inviteLink();
 render();
+syncServerState();
 bootServer();
