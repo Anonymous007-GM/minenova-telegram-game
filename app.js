@@ -148,32 +148,19 @@ async function watchAdForReward() {
     Math.random().toString(36).slice(2, 10);
 
   try {
-    toast("Loading advertisement...");
+  toast("Loading advertisement...");
 
-    await show_11559295({
-      ymid: ymid,
-      requestVar: "mining_reward"
-    });
+  await show_11559295({
+    ymid: ymid,
+    requestVar: "mining_reward"
+  });
 
-    /*
-      Ad completed successfully.
+  toast("Ad completed! Reward is being processed...");
 
-      TEMPORARY reward:
-      +100 NOVA
-
-      We will move this reward to the
-      server-side Monetag postback next.
-    */
-    state.balance += 100;
-
-    render();
-
-    toast("+100 NOVA 🎉");
-
-  } catch (err) {
-    console.error("Monetag:", err);
-    toast("Ad skipped or unavailable");
-  }
+} catch (err) {
+  console.error("Monetag:", err);
+  toast("Ad skipped or unavailable");
+}
 }
 function render() {
   $("balance").textContent = fmt(state.balance);
