@@ -12,14 +12,15 @@ module.exports = async (req, res) => {
 
   try {
     const {
-      ymid,
-      telegram_id,
-      event_type,
-      reward_event_type,
-      estimated_price,
-      zone_id,
-      secret
-    } = req.query;
+  ymid,
+  telegram_id,
+  event_type,
+  reward_event_type,
+  estimated_price,
+  zone_id,
+  request_var,
+  secret
+} = req.query;
 
     // Secret configured only in Monetag postback URL
     if (!secret || secret !== process.env.MONETAG_POSTBACK_SECRET) {
