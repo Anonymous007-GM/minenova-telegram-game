@@ -36,9 +36,12 @@ module.exports = async (req, res) => {
     }
 
     // Only reward monetized events
-    if (reward_event_type !== "valued") {
-      return res.status(200).send("Event not valued");
-    }
+    if (
+  reward_event_type !== "valued" &&
+  reward_event_type !== "yes"
+) {
+  return res.status(200).send("Event not valued");
+}
 
     // Reward only confirmed impressions
     if (event_type !== "impression") {
