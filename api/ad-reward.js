@@ -89,16 +89,16 @@ if (
     if (updateError) throw updateError;
 
     // Record rewarded event
-    const { error: rewardError } = await db
-      .from("ad_rewards")
-      .insert({
-        ymid: String(ymid),
-        telegram_id: Number(telegram_id),
-        reward,
-        reward_event_type,
-        estimated_price: Number(estimated_price || 0)
-      });
-
+   const { error: rewardError } = await db
+  .from("ad_rewards")
+  .insert({
+    ymid: String(ymid),
+    telegram_id: Number(telegram_id),
+    reward,
+    reward_event_type,
+    estimated_price: Number(estimated_price || 0),
+    request_var: request_var || null
+  });
     if (rewardError) throw rewardError;
 
     return res.status(200).json({
