@@ -746,5 +746,4 @@ setInterval(() => {
 
 inviteLink();
 render();
-syncServerState();
 bootServer();
