@@ -36,7 +36,7 @@ module.exports = async (req, res) => {
     }
 
     // Only reward monetized events
-    if (
+if (
   reward_event_type !== "valued" &&
   reward_event_type !== "yes"
 ) {
