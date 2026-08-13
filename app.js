@@ -213,126 +213,104 @@ async function bootServer() {
    ===================================================== */
 
 async function watchAdForReward() {
-
-  if (adBusy) {
-    return;
-  }
-
   if (!serverReady) {
     toast("Game is still connecting...");
     return;
   }
 
-  if (!tg?.initData) {
-    toast("Open the game inside Telegram");
-    return;
-  }
-
-  if (
-    typeof window.show_11559295 !==
-    "function"
-  ) {
+  if (typeof show_11559295 !== "function") {
     toast("Advertisement is not ready");
-    console.error(
-      "Monetag SDK function show_11559295 is missing"
-    );
+    console.error("Monetag function show_11559295 is missing");
     return;
   }
-
-  adBusy = true;
 
   const ymid =
-    "tg_" +
-    String(state.id || "user") +
-    "_ad_" +
+    "ad_" +
     Date.now() +
     "_" +
-    Math.random()
-      .toString(36)
-      .slice(2, 10);
+    Math.random().toString(36).slice(2, 10);
 
-  console.log(
-    "Monetag ad starting:",
-    {
-      ymid,
-      telegramId:
-        tg.initDataUnsafe?.user?.id
-    }
-  );
+  console.log("MONETAG AD START:", {
+    ymid,
+    telegram_id: tg?.initDataUnsafe?.user?.id || null,
+    requestVar: "mining_reward"
+  });
 
   try {
-
     toast("Loading advertisement...");
 
-    /*
-      IMPORTANT:
+    const event = await show_11559295({
+      ymid: ymid,
+      requestVar: "mining_reward"
+    });
 
-      ymid = unique ad event ID
-      requestVar = identifies this button/placement
+    console.log("MONETAG AD EVENT CONFIRMED:", event);
 
-      Monetag sends these values to the
-      server-side postback.
-    */
-
-    const event =
-      await window.show_11559295({
-        ymid: ymid,
-        requestVar: "mining_reward"
-      });
-
-    console.log(
-      "Monetag confirmed event:",
-      event
-    );
+    toast("Ad completed! Checking reward...");
 
     /*
-      DO NOT add +100 here.
+     * The Monetag postback may reach our backend
+     * after the frontend Promise resolves.
+     *
+     * Poll the server several times instead of
+     * checking only once after 2.5 seconds.
+     */
 
-      The backend /api/ad-reward endpoint
-      is responsible for the real reward.
-    */
+    const delays = [
+      1500,
+      3000,
+      4500,
+      6000,
+      7500
+    ];
 
-    toast(
-      "Ad confirmed! Checking reward..."
-    );
+    for (const delay of delays) {
+      await new Promise(resolve =>
+        setTimeout(resolve, delay)
+      );
 
-    /*
-      Give the Monetag postback time to
-      update Supabase.
-    */
+      try {
+        const current = await api("/api/state", {
+          method: "POST",
+          headers: {
+            "Cache-Control": "no-cache"
+          }
+        });
 
-    await new Promise(resolve =>
-      setTimeout(resolve, 4000)
-    );
+        console.log(
+          "SERVER STATE AFTER AD:",
+          current.player
+        );
 
-    /*
-      Now reload the REAL balance from
-      Supabase through /api/state.
-    */
+        applyPlayer(current.player);
+        render();
 
-    await syncServerState();
+        /*
+         * If balance has been updated, stop polling.
+         *
+         * We don't know the exact reward amount here,
+         * so the important thing is that the server state
+         * is refreshed repeatedly.
+         */
+      } catch (stateError) {
+        console.error(
+          "State refresh after ad failed:",
+          stateError
+        );
+      }
+    }
 
-    toast(
-      "Reward processed! 🎉"
-    );
+    toast("Balance checked 🎉");
 
   } catch (err) {
-
     console.error(
-      "Monetag ad error:",
+      "MONETAG AD ERROR:",
       err
     );
 
-    toast(
-      "Ad skipped or unavailable"
-    );
-
-  } finally {
-
-    adBusy = false;
+    toast("Ad skipped or unavailable");
   }
 }
-
 
 /* =====================================================
    RENDER
