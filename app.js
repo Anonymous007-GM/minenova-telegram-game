@@ -704,7 +704,7 @@ $("profileModal").onclick =
 function inviteLink() {
 
   const bot =
-    "YOUR_BOT_USERNAME";
+    "@MineNovaGameBot";
 
   $("inviteLink").textContent =
     `https://t.me/${bot}?start=ref_demo`;
