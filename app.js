@@ -3,11 +3,17 @@ const tg = window.Telegram?.WebApp;
 if (tg) {
   tg.ready();
   tg.expand();
+
   try {
     tg.setHeaderColor("#07111f");
     tg.setBackgroundColor("#07111f");
-  } catch(e) {}
+  } catch (e) {}
 }
+
+
+/* =========================================================
+   DEFAULT STATE
+========================================================= */
 
 const defaultState = {
   id: null,
@@ -19,35 +25,63 @@ const defaultState = {
   taps: 0,
   refs: 0,
   refEarned: 0,
-  upgrades: {power:0, battery:0, regen:0},
+  upgrades: {
+    power: 0,
+    battery: 0,
+    regen: 0
+  },
   claimedTasks: [],
   lastDaily: 0,
-  boost: {mult:1, until:0}
+  boost: {
+    mult: 1,
+    until: 0
+  }
 };
 
-let state = {...defaultState};
+let state = {
+  ...defaultState,
+  upgrades: {
+    ...defaultState.upgrades
+  },
+  boost: {
+    ...defaultState.boost
+  }
+};
+
 let serverReady = false;
 let miningBusy = false;
+
+
+/* =========================================================
+   HELPERS
+========================================================= */
 
 const $ = id => document.getElementById(id);
 
 const fmt = n =>
   Math.floor(Number(n) || 0).toLocaleString();
 
+
 function save() {
   // Server is the source of truth.
 }
 
+
 function toast(msg) {
   const t = $("toast");
+
+  if (!t) return;
+
   t.textContent = msg;
   t.classList.add("show");
+
   clearTimeout(window.__toast);
-  window.__toast = setTimeout(
-    () => t.classList.remove("show"),
-    1600
-  );
+
+  window.__toast = setTimeout(() => {
+    t.classList.remove("show");
+  }, 1600);
 }
+
 
 function activeMult() {
   return Date.now() < state.boost.until
@@ -55,7 +89,13 @@ function activeMult() {
     : 1;
 }
 
+
+/* =========================================================
+   API
+========================================================= */
+
 async function api(path, options = {}) {
+
   if (!tg?.initData) {
     throw new Error("Open the game inside Telegram");
   }
@@ -82,35 +122,91 @@ async function api(path, options = {}) {
   return body;
 }
 
+
+/* =========================================================
+   PLAYER
+========================================================= */
+
 function applyPlayer(p) {
+
   if (!p) return;
 
-  state.id = p.id ?? state.id;
-  state.balance = Number(p.balance ?? state.balance);
-  state.energy = Number(p.energy ?? state.energy);
+  state.id =
+    p.id ?? state.id;
+
+  state.balance =
+    Number(p.balance ?? state.balance);
+
+  state.energy =
+    Number(p.energy ?? state.energy);
+
   state.maxEnergy =
     Number(p.max_energy ?? state.maxEnergy);
+
   state.rate =
     Number(p.mining_power ?? state.rate);
+
   state.regen =
     Number(p.regen ?? state.regen);
+
   state.taps =
     Number(p.taps ?? state.taps);
+
+  /*
+    Keep these if your server later returns them.
+  */
+
+  if (p.refs !== undefined) {
+    state.refs = Number(p.refs);
+  }
+
+  if (p.ref_earned !== undefined) {
+    state.refEarned = Number(p.ref_earned);
+  }
+
+  if (p.upgrades) {
+    state.upgrades = {
+      ...state.upgrades,
+      ...p.upgrades
+    };
+  }
+
+  if (p.claimed_tasks) {
+    state.claimedTasks = p.claimed_tasks;
+  }
+
+  if (p.boost) {
+    state.boost = {
+      ...state.boost,
+      ...p.boost
+    };
+  }
 }
 
+
+/* =========================================================
+   SERVER BOOT
+========================================================= */
+
 async function bootServer() {
+
   if (!tg?.initData) {
+
     toast("Open this game inside Telegram");
+
     render();
+
     return;
   }
 
   try {
+
     const auth = await api("/api/auth", {
       method: "POST"
     });
 
     applyPlayer(auth.player);
+
 
     const current = await api("/api/state", {
       method: "POST"
@@ -118,11 +214,15 @@ async function bootServer() {
 
     applyPlayer(current.player);
 
+
     serverReady = true;
+
     render();
 
   } catch (err) {
-    console.error(err);
+
+    console.error("Boot error:", err);
+
     toast(
       err.message ||
       "Could not connect to game server"
@@ -130,75 +230,250 @@ async function bootServer() {
   }
 }
 
+
+/* =========================================================
+   MONETAG REWARDED AD
+========================================================= */
+
 async function watchAdForReward() {
+
   if (!serverReady) {
+
     toast("Game is still connecting...");
+
     return;
   }
 
+
   if (typeof show_11559295 !== "function") {
+
     toast("Advertisement is not ready");
+
     return;
   }
+
+
+  /*
+    Unique Monetag event ID.
+
+    This same YMID is sent to Monetag and should
+    come back through the Monetag postback.
+  */
 
   const ymid =
     "ad_" +
     Date.now() +
     "_" +
-    Math.random().toString(36).slice(2, 10);
+    Math.random()
+      .toString(36)
+      .slice(2, 10);
+
+
+  const oldBalance =
+    Number(state.balance);
+
 
   try {
+
     toast("Loading advertisement...");
 
+
+    /*
+      Monetag rewarded interstitial.
+
+      requestVar is the trigger/location identifier.
+    */
+
     await show_11559295({
+
       ymid: ymid,
+
       requestVar: "mining_reward"
     });
 
-    toast("Ad completed! Checking reward...");
 
-    // Give Monetag postback a little time to reach our server.
-    await new Promise(resolve => setTimeout(resolve, 2500));
+    toast(
+      "Ad completed! Waiting for reward..."
+    );
 
-    // Get the real balance from Supabase.
-    const current = await api("/api/state", {
-      method: "POST"
-    });
 
-    applyPlayer(current.player);
-    render();
+    /*
+      Monetag postbacks can arrive after the ad
+      has already closed.
 
-    toast("Balance updated! 🎉");
+      Instead of checking only once after 2.5 seconds,
+      check the server repeatedly for up to 15 seconds.
+    */
+
+    const maxAttempts = 8;
+
+    const delay = 2000;
+
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+
+      await new Promise(resolve =>
+        setTimeout(resolve, delay)
+      );
+
+
+      try {
+
+        const current =
+          await api("/api/state", {
+            method: "POST"
+          });
+
+
+        if (!current?.player) {
+          continue;
+        }
+
+
+        const newBalance =
+          Number(current.player.balance);
+
+
+        applyPlayer(current.player);
+
+        render();
+
+
+        /*
+          If the balance increased, the postback
+          successfully rewarded the player.
+        */
+
+        if (newBalance > oldBalance) {
+
+          toast(
+            `+${fmt(newBalance - oldBalance)} NOVA 🎉`
+          );
+
+          return;
+        }
+
+      } catch (stateError) {
+
+        console.error(
+          "Reward state check:",
+          stateError
+        );
+      }
+    }
+
+
+    /*
+      If we reach here, the ad closed but the
+      postback reward has not appeared yet.
+    */
+
+    toast(
+      "Ad finished. Reward is still processing..."
+    );
+
 
   } catch (err) {
-    console.error("Monetag:", err);
-    toast("Ad skipped or unavailable");
+
+    console.error(
+      "Monetag:",
+      err
+    );
+
+    toast(
+      "Ad skipped or unavailable"
+    );
   }
 }
+
+
+/*
+  Make the function globally available.
+
+  This is useful if your HTML uses:
+  onclick="watchAdForReward()"
+*/
+
+window.watchAdForReward =
+  watchAdForReward;
+
+
+/* =========================================================
+   RENDER
+========================================================= */
+
 function render() {
-  $("balance").textContent = fmt(state.balance);
-  $("rate").textContent =
-    fmt(state.rate * activeMult());
-  $("energy").textContent = fmt(state.energy);
-  $("maxEnergy").textContent =
-    fmt(state.maxEnergy);
-  $("regen").textContent = fmt(state.regen);
 
-  $("energyBar").style.width =
-    Math.max(
-      0,
-      state.energy / state.maxEnergy * 100
-    ) + "%";
+  if ($("balance")) {
+    $("balance").textContent =
+      fmt(state.balance);
+  }
 
-  $("refCount").textContent = fmt(state.refs);
-  $("refEarned").textContent =
-    fmt(state.refEarned);
 
-  $("profileBalance").textContent =
-    fmt(state.balance);
+  if ($("rate")) {
+    $("rate").textContent =
+      fmt(
+        state.rate *
+        activeMult()
+      );
+  }
 
-  $("profileTaps").textContent =
-    fmt(state.taps);
+
+  if ($("energy")) {
+    $("energy").textContent =
+      fmt(state.energy);
+  }
+
+
+  if ($("maxEnergy")) {
+    $("maxEnergy").textContent =
+      fmt(state.maxEnergy);
+  }
+
+
+  if ($("regen")) {
+    $("regen").textContent =
+      fmt(state.regen);
+  }
+
+
+  if ($("energyBar")) {
+
+    const percent =
+      state.maxEnergy > 0
+        ? state.energy /
+          state.maxEnergy *
+          100
+        : 0;
+
+    $("energyBar").style.width =
+      Math.max(0, percent) + "%";
+  }
+
+
+  if ($("refCount")) {
+    $("refCount").textContent =
+      fmt(state.refs);
+  }
+
+
+  if ($("refEarned")) {
+    $("refEarned").textContent =
+      fmt(state.refEarned);
+  }
+
+
+  if ($("profileBalance")) {
+    $("profileBalance").textContent =
+      fmt(state.balance);
+  }
+
+
+  if ($("profileTaps")) {
+    $("profileTaps").textContent =
+      fmt(state.taps);
+  }
+
 
   renderUpgrades();
   renderBoosts();
@@ -206,104 +481,238 @@ function render() {
   renderLeaderboard();
 }
 
-async function mine(e) {
-  if (!serverReady || miningBusy) return;
 
-  if (state.energy < 1) {
-    toast("Not enough energy");
+/* =========================================================
+   MINING
+========================================================= */
+
+async function mine(e) {
+
+  if (!serverReady || miningBusy) {
     return;
   }
 
-  // Make the button respond immediately
-  const btn = $("mineBtn");
 
-  btn.classList.remove("pop");
-  void btn.offsetWidth;
-  btn.classList.add("pop");
+  if (state.energy < 1) {
 
-  const rect = btn.getBoundingClientRect();
+    toast("Not enough energy");
 
-  const r = document.createElement("span");
-  r.className = "float";
-  r.textContent = "+" + fmt(state.rate);
+    return;
+  }
 
-  r.style.left =
-    (e?.clientX || rect.left + rect.width / 2) + "px";
 
-  r.style.top =
-    (e?.clientY || rect.top + rect.height / 2) + "px";
+  const btn =
+    $("mineBtn");
 
-  document.body.appendChild(r);
+  if (!btn) return;
 
-  setTimeout(() => r.remove(), 700);
 
-  // Update the UI immediately
-  state.energy -= 1;
-  state.balance += state.rate;
-  state.taps += 1;
+  /*
+    Prevent double requests.
+  */
 
-  render();
+  miningBusy = true;
 
-  // Send the mining action to the server
-  // without making the button wait for the response.
+
   try {
+
+    /*
+      Button animation.
+    */
+
+    btn.classList.remove("pop");
+
+    void btn.offsetWidth;
+
+    btn.classList.add("pop");
+
+
+    const rect =
+      btn.getBoundingClientRect();
+
+
+    /*
+      Floating +NOVA animation.
+    */
+
+    const r =
+      document.createElement("span");
+
+    r.className = "float";
+
+    r.textContent =
+      "+" + fmt(state.rate);
+
+
+    r.style.left =
+      (
+        e?.clientX ||
+        rect.left +
+        rect.width / 2
+      ) + "px";
+
+
+    r.style.top =
+      (
+        e?.clientY ||
+        rect.top +
+        rect.height / 2
+      ) + "px";
+
+
+    document.body.appendChild(r);
+
+
+    setTimeout(() => {
+      r.remove();
+    }, 700);
+
+
+    /*
+      Optimistic UI.
+    */
+
+    state.energy -= 1;
+
+    state.balance +=
+      state.rate;
+
+    state.taps += 1;
+
+    render();
+
+
+    /*
+      Server mining.
+    */
+
     await api("/api/mine", {
       method: "POST"
     });
 
-    // Get the server's actual state afterwards.
-    const current = await api("/api/state", {
-      method: "POST"
-    });
 
-    applyPlayer(current.player);
-    render();
+    /*
+      Get real server state.
+    */
 
-  } catch (err) {
-    console.error(err);
-
-    // Refresh from server if the request failed.
-    try {
-      const current = await api("/api/state", {
+    const current =
+      await api("/api/state", {
         method: "POST"
       });
 
-      applyPlayer(current.player);
+
+    applyPlayer(
+      current.player
+    );
+
+    render();
+
+
+  } catch (err) {
+
+    console.error(
+      "Mining error:",
+      err
+    );
+
+
+    /*
+      Recover actual server state.
+    */
+
+    try {
+
+      const current =
+        await api("/api/state", {
+          method: "POST"
+        });
+
+
+      applyPlayer(
+        current.player
+      );
+
       render();
 
+
     } catch (_) {
-      toast("Connection problem");
+
+      toast(
+        "Connection problem"
+      );
     }
+
+
+  } finally {
+
+    miningBusy = false;
   }
 }
 
-$("mineBtn").addEventListener(
-  "click",
-  mine
-);
 
-$("fullEnergyBtn").addEventListener(
-  "click",
-  () => toast(
-    "Energy purchases will be connected next."
-  )
-);
+/* =========================================================
+   MINING BUTTON
+========================================================= */
 
-function upgradeCost(type) {
-  const lvl = state.upgrades[type];
+if ($("mineBtn")) {
 
-  const base = {
-    power: 150,
-    battery: 400,
-    regen: 300
-  }[type];
-
-  return Math.floor(
-    base * Math.pow(1.65, lvl)
+  $("mineBtn").addEventListener(
+    "click",
+    mine
   );
 }
 
+
+if ($("fullEnergyBtn")) {
+
+  $("fullEnergyBtn").addEventListener(
+    "click",
+    () => {
+
+      toast(
+        "Energy purchases will be connected next."
+      );
+
+    }
+  );
+}
+
+
+/* =========================================================
+   UPGRADES
+========================================================= */
+
+function upgradeCost(type) {
+
+  const lvl =
+    Number(
+      state.upgrades[type] || 0
+    );
+
+
+  const base = {
+
+    power: 150,
+
+    battery: 400,
+
+    regen: 300
+
+  }[type];
+
+
+  return Math.floor(
+    base *
+    Math.pow(
+      1.65,
+      lvl
+    )
+  );
+}
+
+
 const upgradeData = [
+
   [
     "power",
     "⛏️",
@@ -311,6 +720,7 @@ const upgradeData = [
     "Increase NOVA earned per tap.",
     "rate"
   ],
+
   [
     "battery",
     "🔋",
@@ -318,6 +728,7 @@ const upgradeData = [
     "Increase maximum energy by 100.",
     "maxEnergy"
   ],
+
   [
     "regen",
     "💧",
@@ -325,56 +736,87 @@ const upgradeData = [
     "Recover 1 extra energy every second.",
     "regen"
   ]
+
 ];
 
+
 function renderUpgrades() {
-  $("upgradeList").innerHTML =
-    upgradeData.map(
-      ([type,icon,name,desc,stat]) => {
 
-        const lvl =
-          state.upgrades[type];
+  const container =
+    $("upgradeList");
 
-        const cost =
-          upgradeCost(type);
+  if (!container) return;
 
-        return `
-          <div class="item">
-            <div class="item-icon">
-              ${icon}
+
+  container.innerHTML =
+    upgradeData
+      .map(
+        ([type, icon, name, desc]) => {
+
+          const lvl =
+            Number(
+              state.upgrades[type] || 0
+            );
+
+
+          const cost =
+            upgradeCost(type);
+
+
+          return `
+
+            <div class="item">
+
+              <div class="item-icon">
+                ${icon}
+              </div>
+
+              <div class="item-main">
+
+                <b>
+                  ${name} · Lv.${lvl}
+                </b>
+
+                <small>
+                  ${desc}
+                </small>
+
+              </div>
+
+              <button
+                onclick="buyUpgrade('${type}')"
+                ${state.balance < cost
+                  ? "disabled"
+                  : ""}
+              >
+                ${fmt(cost)} NOVA
+              </button>
+
             </div>
 
-            <div class="item-main">
-              <b>
-                ${name} · Lv.${lvl}
-              </b>
-
-              <small>
-                ${desc}
-              </small>
-            </div>
-
-            <button
-              onclick="buyUpgrade('${type}')"
-              ${state.balance < cost
-                ? "disabled"
-                : ""}
-            >
-              ${fmt(cost)} NOVA
-            </button>
-          </div>
-        `;
-      }
-    ).join("");
+          `;
+        }
+      )
+      .join("");
 }
 
-window.buyUpgrade = type => {
-  toast(
-    "Upgrades are not connected to the server yet."
-  );
-};
+
+window.buyUpgrade =
+  type => {
+
+    toast(
+      "Upgrades are not connected to the server yet."
+    );
+
+  };
+
+
+/* =========================================================
+   BOOSTS
+========================================================= */
 
 const boosts = [
+
   [
     "turbo",
     "⚡",
@@ -384,6 +826,7 @@ const boosts = [
     30,
     250
   ],
+
   [
     "overdrive",
     "🔥",
@@ -393,6 +836,7 @@ const boosts = [
     15,
     600
   ],
+
   [
     "refill",
     "🔋",
@@ -402,49 +846,79 @@ const boosts = [
     0,
     150
   ]
+
 ];
 
-function renderBoosts() {
-  $("boostList").innerHTML =
-    boosts.map(
-      ([id,icon,name,desc,mult,sec,cost]) =>
-      `
-        <div class="boost">
 
-          <div class="boost-top">
-            <div class="boost-icon">
-              ${icon}
+function renderBoosts() {
+
+  const container =
+    $("boostList");
+
+  if (!container) return;
+
+
+  container.innerHTML =
+    boosts
+      .map(
+        ([id, icon, name, desc, mult, sec, cost]) => `
+
+          <div class="boost">
+
+            <div class="boost-top">
+
+              <div class="boost-icon">
+                ${icon}
+              </div>
+
+              <b>
+                ${fmt(cost)} NOVA
+              </b>
+
             </div>
 
-            <b>
-              ${fmt(cost)} NOVA
-            </b>
+            <h3>
+              ${name}
+            </h3>
+
+            <p>
+              ${desc}
+            </p>
+
+            <button
+              onclick="useBoost('${id}')"
+            >
+              ${
+                id === "refill"
+                  ? "ACTIVATE"
+                  : "ACTIVATE BOOST"
+              }
+            </button>
+
           </div>
 
-          <h3>${name}</h3>
-
-          <p>${desc}</p>
-
-          <button
-            onclick="useBoost('${id}')"
-          >
-            ${id === "refill"
-              ? "ACTIVATE"
-              : "ACTIVATE BOOST"}
-          </button>
-
-        </div>
-      `
-    ).join("");
+        `
+      )
+      .join("");
 }
 
-window.useBoost = id => {
-  toast(
-    "Boosts are not connected to the server yet."
-  );
-};
+
+window.useBoost =
+  id => {
+
+    toast(
+      "Boosts are not connected to the server yet."
+    );
+
+  };
+
+
+/* =========================================================
+   TASKS
+========================================================= */
 
 const tasks = [
+
   [
     "daily",
     "📅",
@@ -453,6 +927,7 @@ const tasks = [
     100,
     () => state.taps >= 100
   ],
+
   [
     "rich",
     "💎",
@@ -461,6 +936,7 @@ const tasks = [
     300,
     () => state.balance >= 5000
   ],
+
   [
     "power",
     "🔧",
@@ -470,111 +946,174 @@ const tasks = [
     () =>
       Object.values(
         state.upgrades
-      ).some(v => v > 0)
+      ).some(
+        v => Number(v) > 0
+      )
   ]
+
 ];
 
+
 function renderTasks() {
-  $("taskList").innerHTML =
-    tasks.map(
-      ([id,icon,name,desc,reward,done]) => {
 
-        const claimed =
-          state.claimedTasks.includes(id);
+  const container =
+    $("taskList");
 
-        const ready = done();
+  if (!container) return;
 
-        return `
-          <div class="item">
 
-            <div class="item-icon">
-              ${icon}
+  container.innerHTML =
+    tasks
+      .map(
+        ([id, icon, name, desc, reward, done]) => {
+
+          const claimed =
+            state.claimedTasks
+              .includes(id);
+
+
+          const ready =
+            done();
+
+
+          return `
+
+            <div class="item">
+
+              <div class="item-icon">
+                ${icon}
+              </div>
+
+              <div class="item-main">
+
+                <b>
+                  ${name}
+                </b>
+
+                <small>
+                  ${desc} · +${reward} NOVA
+                </small>
+
+              </div>
+
+              <button
+                onclick="claimTask('${id}')"
+                ${claimed || !ready
+                  ? "disabled"
+                  : ""}
+              >
+
+                ${
+                  claimed
+                    ? "CLAIMED"
+                    : ready
+                      ? "CLAIM"
+                      : "LOCKED"
+                }
+
+              </button>
+
             </div>
 
-            <div class="item-main">
-
-              <b>${name}</b>
-
-              <small>
-                ${desc} · +${reward} NOVA
-              </small>
-
-            </div>
-
-            <button
-              onclick="claimTask('${id}')"
-              ${claimed || !ready
-                ? "disabled"
-                : ""}
-            >
-              ${
-                claimed
-                  ? "CLAIMED"
-                  : ready
-                    ? "CLAIM"
-                    : "LOCKED"
-              }
-            </button>
-
-          </div>
-        `;
-      }
-    ).join("");
+          `;
+        }
+      )
+      .join("");
 }
 
-window.claimTask = id => {
-  toast(
-    "Tasks are not connected to the server yet."
-  );
-};
+
+window.claimTask =
+  id => {
+
+    toast(
+      "Tasks are not connected to the server yet."
+    );
+
+  };
+
+
+/* =========================================================
+   LEADERBOARD
+========================================================= */
 
 function renderLeaderboard() {
+
+  const container =
+    $("leaderboard");
+
+  if (!container) return;
+
 
   const meName =
     tg?.initDataUnsafe?.user?.first_name ||
     "You";
 
+
   const names = [
+
     "NovaPilot",
+
     "AstroMiner",
+
     "LunarFox",
+
     "PixelDrill",
+
     "OrbitMax",
+
     "CosmoTap",
+
     "StarForge"
+
   ];
+
 
   const scores = [
+
     98200,
+
     76100,
+
     65300,
+
     52100,
+
     44400,
+
     39100,
+
     31200
+
   ];
 
+
   const rows =
-    names.map((n,i) => ({
-      n,
-      score: scores[i]
-    }));
+    names.map(
+      (n, i) => ({
+        n,
+        score: scores[i]
+      })
+    );
+
 
   rows.push({
     n: meName,
     score: state.balance
   });
 
+
   rows.sort(
-    (a,b) => b.score - a.score
+    (a, b) =>
+      b.score - a.score
   );
 
-  $("leaderboard").innerHTML =
+
+  container.innerHTML =
     rows
-      .slice(0,10)
+      .slice(0, 10)
       .map(
-        (r,i) =>
-        `
+        (r, i) => `
+
           <div class="rank-row">
 
             <div class="rank-num">
@@ -582,11 +1121,13 @@ function renderLeaderboard() {
             </div>
 
             <div class="rank-avatar">
+
               ${
                 i < 3
-                  ? ["🥇","🥈","🥉"][i]
+                  ? ["🥇", "🥈", "🥉"][i]
                   : "⛏️"
               }
+
             </div>
 
             <div class="rank-user">
@@ -596,9 +1137,11 @@ function renderLeaderboard() {
               </b>
 
               <small>
-                ${i < 3
-                  ? "Elite miner"
-                  : "Miner"}
+                ${
+                  i < 3
+                    ? "Elite miner"
+                    : "Miner"
+                }
               </small>
 
             </div>
@@ -608,12 +1151,15 @@ function renderLeaderboard() {
             </div>
 
           </div>
+
         `
       )
       .join("");
 }
 
+
 function escapeHtml(s) {
+
   return String(s).replace(
     /[&<>"']/g,
     c => ({
@@ -624,114 +1170,219 @@ function escapeHtml(s) {
       "'": "&#39;"
     }[c])
   );
+
 }
+
+
+/* =========================================================
+   SCREEN NAVIGATION
+========================================================= */
 
 function openScreen(id) {
 
   document
     .querySelectorAll(".screen")
-    .forEach(
-      x =>
-        x.classList.toggle(
-          "active",
-          x.id === id
-        )
-    );
+    .forEach(x => {
+
+      x.classList.toggle(
+        "active",
+        x.id === id
+      );
+
+    });
+
 
   document
     .querySelectorAll(".nav")
-    .forEach(
-      x =>
-        x.classList.toggle(
-          "active",
-          x.dataset.go === id
-        )
-    );
+    .forEach(x => {
+
+      x.classList.toggle(
+        "active",
+        x.dataset.go === id
+      );
+
+    });
+
 
   if (id === "tasks") {
+
     renderTasks();
+
   }
 }
 
+
 document
   .querySelectorAll("[data-go]")
-  .forEach(
-    b =>
-      b.addEventListener(
-        "click",
-        () => openScreen(b.dataset.go)
-      )
-  );
+  .forEach(b => {
+
+    b.addEventListener(
+      "click",
+      () => {
+
+        openScreen(
+          b.dataset.go
+        );
+
+      }
+    );
+
+  });
+
+
+/* =========================================================
+   PROFILE
+========================================================= */
 
 function profile() {
 
   const u =
     tg?.initDataUnsafe?.user;
 
-  $("profileName").textContent =
-    u?.first_name || "Miner";
 
-  $("profileUsername").textContent =
-    u?.username
-      ? "@" + u.username
-      : "Telegram Miner";
+  if ($("profileName")) {
 
-  $("profileAvatar").textContent =
-    u?.emoji_status_custom_emoji_id
-      ? "✦"
-      : "👤";
+    $("profileName").textContent =
+      u?.first_name ||
+      "Miner";
 
-  $("profileModal")
-    .classList.remove("hidden");
+  }
+
+
+  if ($("profileUsername")) {
+
+    $("profileUsername").textContent =
+      u?.username
+        ? "@" + u.username
+        : "Telegram Miner";
+
+  }
+
+
+  if ($("profileAvatar")) {
+
+    $("profileAvatar").textContent =
+      u?.emoji_status_custom_emoji_id
+        ? "✦"
+        : "👤";
+
+  }
+
+
+  if ($("profileModal")) {
+
+    $("profileModal")
+      .classList.remove("hidden");
+
+  }
 }
 
-$("profileBtn").onclick =
-  profile;
 
-$("closeModal").onclick =
-  () =>
-    $("profileModal")
-      .classList.add("hidden");
+if ($("profileBtn")) {
 
-$("profileModal").onclick =
-  e => {
-    if (e.target.id === "profileModal") {
+  $("profileBtn").onclick =
+    profile;
+
+}
+
+
+if ($("closeModal")) {
+
+  $("closeModal").onclick =
+    () => {
+
       $("profileModal")
-        .classList.add("hidden");
-    }
-  };
+        ?.classList.add("hidden");
+
+    };
+
+}
+
+
+if ($("profileModal")) {
+
+  $("profileModal").onclick =
+    e => {
+
+      if (
+        e.target.id ===
+        "profileModal"
+      ) {
+
+        $("profileModal")
+          .classList.add("hidden");
+
+      }
+
+    };
+
+}
+
+
+/* =========================================================
+   REFERRAL LINK
+========================================================= */
 
 function inviteLink() {
 
-  const bot =
-    "@MineNovaGameBot";
+  /*
+    IMPORTANT:
+    Do NOT include @ in the username.
+  */
 
-  $("inviteLink").textContent =
-    `https://t.me/${bot}?start=ref_demo`;
+  const bot =
+    "MineNovaGameBot";
+
+
+  if ($("inviteLink")) {
+
+    $("inviteLink").textContent =
+      `https://t.me/${bot}?start=ref_demo`;
+
+  }
 }
 
-$("copyInvite").onclick =
-  async () => {
 
-    try {
+if ($("copyInvite")) {
 
-      await navigator.clipboard.writeText(
-        $("inviteLink").textContent
-      );
+  $("copyInvite").onclick =
+    async () => {
 
-      toast("Invite link copied");
+      try {
 
-    } catch(e) {
+        await navigator.clipboard.writeText(
+          $("inviteLink").textContent
+        );
 
-      toast("Copy failed");
-    }
-  };
+
+        toast(
+          "Invite link copied"
+        );
+
+
+      } catch (e) {
+
+        toast(
+          "Copy failed"
+        );
+
+      }
+
+    };
+
+}
+
+
+/* =========================================================
+   BOOST TIMER
+========================================================= */
 
 setInterval(() => {
 
   if (
     state.boost.until &&
-    Date.now() > state.boost.until
+    Date.now() >
+    state.boost.until
   ) {
 
     state.boost = {
@@ -739,11 +1390,20 @@ setInterval(() => {
       until: 0
     };
 
+
     render();
+
   }
 
 }, 1000);
 
+
+/* =========================================================
+   START APP
+========================================================= */
+
 inviteLink();
+
 render();
+
 bootServer();
