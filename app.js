@@ -10,11 +10,6 @@ if (tg) {
   } catch (e) {}
 }
 
-
-/* =========================================================
-   DEFAULT STATE
-========================================================= */
-
 const defaultState = {
   id: null,
   balance: 0,
@@ -50,22 +45,12 @@ let state = {
 
 let serverReady = false;
 let miningBusy = false;
-
-
-/* =========================================================
-   HELPERS
-========================================================= */
+let adBusy = false;
 
 const $ = id => document.getElementById(id);
 
 const fmt = n =>
   Math.floor(Number(n) || 0).toLocaleString();
-
-
-function save() {
-  // Server is the source of truth.
-}
-
 
 function toast(msg) {
   const t = $("toast");
@@ -82,20 +67,13 @@ function toast(msg) {
   }, 1600);
 }
 
-
 function activeMult() {
   return Date.now() < state.boost.until
     ? state.boost.mult
     : 1;
 }
 
-
-/* =========================================================
-   API
-========================================================= */
-
 async function api(path, options = {}) {
-
   if (!tg?.initData) {
     throw new Error("Open the game inside Telegram");
   }
@@ -122,13 +100,7 @@ async function api(path, options = {}) {
   return body;
 }
 
-
-/* =========================================================
-   PLAYER
-========================================================= */
-
 function applyPlayer(p) {
-
   if (!p) return;
 
   state.id =
@@ -152,16 +124,13 @@ function applyPlayer(p) {
   state.taps =
     Number(p.taps ?? state.taps);
 
-  /*
-    Keep these if your server later returns them.
-  */
-
   if (p.refs !== undefined) {
     state.refs = Number(p.refs);
   }
 
   if (p.ref_earned !== undefined) {
-    state.refEarned = Number(p.ref_earned);
+    state.refEarned =
+      Number(p.ref_earned);
   }
 
   if (p.upgrades) {
@@ -172,56 +141,64 @@ function applyPlayer(p) {
   }
 
   if (p.claimed_tasks) {
-    state.claimedTasks = p.claimed_tasks;
-  }
-
-  if (p.boost) {
-    state.boost = {
-      ...state.boost,
-      ...p.boost
-    };
+    state.claimedTasks =
+      Array.isArray(p.claimed_tasks)
+        ? p.claimed_tasks
+        : [];
   }
 }
 
+async function syncServerState() {
+  if (!serverReady) return;
 
-/* =========================================================
-   SERVER BOOT
-========================================================= */
+  try {
+    const current =
+      await api("/api/state", {
+        method: "POST"
+      });
 
-async function bootServer() {
-
-  if (!tg?.initData) {
-
-    toast("Open this game inside Telegram");
-
+    applyPlayer(current.player);
     render();
 
+  } catch (err) {
+    console.error(
+      "State sync error:",
+      err
+    );
+  }
+}
+
+async function bootServer() {
+  if (!tg?.initData) {
+    toast("Open this game inside Telegram");
+    render();
     return;
   }
 
   try {
-
-    const auth = await api("/api/auth", {
-      method: "POST"
-    });
+    const auth =
+      await api("/api/auth", {
+        method: "POST"
+      });
 
     applyPlayer(auth.player);
 
-
-    const current = await api("/api/state", {
-      method: "POST"
-    });
+    const current =
+      await api("/api/state", {
+        method: "POST"
+      });
 
     applyPlayer(current.player);
-
 
     serverReady = true;
 
     render();
 
   } catch (err) {
-
-    console.error("Boot error:", err);
+    console.error(
+      "Boot error:",
+      err
+    );
 
     toast(
       err.message ||
@@ -231,176 +208,135 @@ async function bootServer() {
 }
 
 
-/* =========================================================
+/* =====================================================
    MONETAG REWARDED AD
-========================================================= */
+   ===================================================== */
 
 async function watchAdForReward() {
 
+  if (adBusy) {
+    return;
+  }
+
   if (!serverReady) {
-
     toast("Game is still connecting...");
-
     return;
   }
 
+  if (!tg?.initData) {
+    toast("Open the game inside Telegram");
+    return;
+  }
 
-  if (typeof show_11559295 !== "function") {
-
+  if (
+    typeof window.show_11559295 !==
+    "function"
+  ) {
     toast("Advertisement is not ready");
-
+    console.error(
+      "Monetag SDK function show_11559295 is missing"
+    );
     return;
   }
 
-
-  /*
-    Unique Monetag event ID.
-
-    This same YMID is sent to Monetag and should
-    come back through the Monetag postback.
-  */
+  adBusy = true;
 
   const ymid =
-    "ad_" +
+    "tg_" +
+    String(state.id || "user") +
+    "_ad_" +
     Date.now() +
     "_" +
     Math.random()
       .toString(36)
       .slice(2, 10);
 
-
-  const oldBalance =
-    Number(state.balance);
-
+  console.log(
+    "Monetag ad starting:",
+    {
+      ymid,
+      telegramId:
+        tg.initDataUnsafe?.user?.id
+    }
+  );
 
   try {
 
     toast("Loading advertisement...");
 
-
     /*
-      Monetag rewarded interstitial.
+      IMPORTANT:
 
-      requestVar is the trigger/location identifier.
+      ymid = unique ad event ID
+      requestVar = identifies this button/placement
+
+      Monetag sends these values to the
+      server-side postback.
     */
 
-    await show_11559295({
+    const event =
+      await window.show_11559295({
+        ymid: ymid,
+        requestVar: "mining_reward"
+      });
 
-      ymid: ymid,
-
-      requestVar: "mining_reward"
-    });
-
-
-    toast(
-      "Ad completed! Waiting for reward..."
+    console.log(
+      "Monetag confirmed event:",
+      event
     );
 
-
     /*
-      Monetag postbacks can arrive after the ad
-      has already closed.
+      DO NOT add +100 here.
 
-      Instead of checking only once after 2.5 seconds,
-      check the server repeatedly for up to 15 seconds.
-    */
-
-    const maxAttempts = 8;
-
-    const delay = 2000;
-
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-
-      await new Promise(resolve =>
-        setTimeout(resolve, delay)
-      );
-
-
-      try {
-
-        const current =
-          await api("/api/state", {
-            method: "POST"
-          });
-
-
-        if (!current?.player) {
-          continue;
-        }
-
-
-        const newBalance =
-          Number(current.player.balance);
-
-
-        applyPlayer(current.player);
-
-        render();
-
-
-        /*
-          If the balance increased, the postback
-          successfully rewarded the player.
-        */
-
-        if (newBalance > oldBalance) {
-
-          toast(
-            `+${fmt(newBalance - oldBalance)} NOVA 🎉`
-          );
-
-          return;
-        }
-
-      } catch (stateError) {
-
-        console.error(
-          "Reward state check:",
-          stateError
-        );
-      }
-    }
-
-
-    /*
-      If we reach here, the ad closed but the
-      postback reward has not appeared yet.
+      The backend /api/ad-reward endpoint
+      is responsible for the real reward.
     */
 
     toast(
-      "Ad finished. Reward is still processing..."
+      "Ad confirmed! Checking reward..."
     );
 
+    /*
+      Give the Monetag postback time to
+      update Supabase.
+    */
+
+    await new Promise(resolve =>
+      setTimeout(resolve, 4000)
+    );
+
+    /*
+      Now reload the REAL balance from
+      Supabase through /api/state.
+    */
+
+    await syncServerState();
+
+    toast(
+      "Reward processed! 🎉"
+    );
 
   } catch (err) {
 
     console.error(
-      "Monetag:",
+      "Monetag ad error:",
       err
     );
 
     toast(
       "Ad skipped or unavailable"
     );
+
+  } finally {
+
+    adBusy = false;
   }
 }
 
 
-/*
-  Make the function globally available.
-
-  This is useful if your HTML uses:
-  onclick="watchAdForReward()"
-*/
-
-window.watchAdForReward =
-  watchAdForReward;
-
-
-/* =========================================================
+/* =====================================================
    RENDER
-========================================================= */
+   ===================================================== */
 
 function render() {
 
@@ -408,7 +344,6 @@ function render() {
     $("balance").textContent =
       fmt(state.balance);
   }
-
 
   if ($("rate")) {
     $("rate").textContent =
@@ -418,24 +353,20 @@ function render() {
       );
   }
 
-
   if ($("energy")) {
     $("energy").textContent =
       fmt(state.energy);
   }
-
 
   if ($("maxEnergy")) {
     $("maxEnergy").textContent =
       fmt(state.maxEnergy);
   }
 
-
   if ($("regen")) {
     $("regen").textContent =
       fmt(state.regen);
   }
-
 
   if ($("energyBar")) {
 
@@ -447,33 +378,31 @@ function render() {
         : 0;
 
     $("energyBar").style.width =
-      Math.max(0, percent) + "%";
+      Math.max(
+        0,
+        Math.min(100, percent)
+      ) + "%";
   }
-
 
   if ($("refCount")) {
     $("refCount").textContent =
       fmt(state.refs);
   }
 
-
   if ($("refEarned")) {
     $("refEarned").textContent =
       fmt(state.refEarned);
   }
-
 
   if ($("profileBalance")) {
     $("profileBalance").textContent =
       fmt(state.balance);
   }
 
-
   if ($("profileTaps")) {
     $("profileTaps").textContent =
       fmt(state.taps);
   }
-
 
   renderUpgrades();
   renderBoosts();
@@ -482,131 +411,76 @@ function render() {
 }
 
 
-/* =========================================================
+/* =====================================================
    MINING
-========================================================= */
+   ===================================================== */
 
 async function mine(e) {
 
-  if (!serverReady || miningBusy) {
-    return;
-  }
+  if (!serverReady) return;
 
+  if (miningBusy) return;
 
   if (state.energy < 1) {
-
     toast("Not enough energy");
-
     return;
   }
-
 
   const btn =
     $("mineBtn");
 
   if (!btn) return;
 
-
-  /*
-    Prevent double requests.
-  */
-
   miningBusy = true;
 
+  btn.classList.remove("pop");
+
+  void btn.offsetWidth;
+
+  btn.classList.add("pop");
+
+  const rect =
+    btn.getBoundingClientRect();
+
+  const r =
+    document.createElement("span");
+
+  r.className = "float";
+
+  r.textContent =
+    "+" + fmt(state.rate);
+
+  r.style.left =
+    (
+      e?.clientX ||
+      rect.left +
+      rect.width / 2
+    ) + "px";
+
+  r.style.top =
+    (
+      e?.clientY ||
+      rect.top +
+      rect.height / 2
+    ) + "px";
+
+  document.body.appendChild(r);
+
+  setTimeout(() => {
+    r.remove();
+  }, 700);
 
   try {
-
-    /*
-      Button animation.
-    */
-
-    btn.classList.remove("pop");
-
-    void btn.offsetWidth;
-
-    btn.classList.add("pop");
-
-
-    const rect =
-      btn.getBoundingClientRect();
-
-
-    /*
-      Floating +NOVA animation.
-    */
-
-    const r =
-      document.createElement("span");
-
-    r.className = "float";
-
-    r.textContent =
-      "+" + fmt(state.rate);
-
-
-    r.style.left =
-      (
-        e?.clientX ||
-        rect.left +
-        rect.width / 2
-      ) + "px";
-
-
-    r.style.top =
-      (
-        e?.clientY ||
-        rect.top +
-        rect.height / 2
-      ) + "px";
-
-
-    document.body.appendChild(r);
-
-
-    setTimeout(() => {
-      r.remove();
-    }, 700);
-
-
-    /*
-      Optimistic UI.
-    */
-
-    state.energy -= 1;
-
-    state.balance +=
-      state.rate;
-
-    state.taps += 1;
-
-    render();
-
-
-    /*
-      Server mining.
-    */
 
     await api("/api/mine", {
       method: "POST"
     });
 
-
     /*
-      Get real server state.
+      Server is source of truth.
     */
 
-    const current =
-      await api("/api/state", {
-        method: "POST"
-      });
-
-
-    applyPlayer(
-      current.player
-    );
-
-    render();
-
+    await syncServerState();
 
   } catch (err) {
 
@@ -615,33 +489,12 @@ async function mine(e) {
       err
     );
 
+    toast(
+      err.message ||
+      "Mining failed"
+    );
 
-    /*
-      Recover actual server state.
-    */
-
-    try {
-
-      const current =
-        await api("/api/state", {
-          method: "POST"
-        });
-
-
-      applyPlayer(
-        current.player
-      );
-
-      render();
-
-
-    } catch (_) {
-
-      toast(
-        "Connection problem"
-      );
-    }
-
+    await syncServerState();
 
   } finally {
 
@@ -650,9 +503,9 @@ async function mine(e) {
 }
 
 
-/* =========================================================
-   MINING BUTTON
-========================================================= */
+/* =====================================================
+   BUTTONS
+   ===================================================== */
 
 if ($("mineBtn")) {
 
@@ -662,25 +515,21 @@ if ($("mineBtn")) {
   );
 }
 
-
 if ($("fullEnergyBtn")) {
 
   $("fullEnergyBtn").addEventListener(
     "click",
-    () => {
-
+    () =>
       toast(
         "Energy purchases will be connected next."
-      );
-
-    }
+      )
   );
 }
 
 
-/* =========================================================
+/* =====================================================
    UPGRADES
-========================================================= */
+   ===================================================== */
 
 function upgradeCost(type) {
 
@@ -689,27 +538,17 @@ function upgradeCost(type) {
       state.upgrades[type] || 0
     );
 
-
   const base = {
-
     power: 150,
-
     battery: 400,
-
     regen: 300
-
   }[type];
-
 
   return Math.floor(
     base *
-    Math.pow(
-      1.65,
-      lvl
-    )
+    Math.pow(1.65, lvl)
   );
 }
-
 
 const upgradeData = [
 
@@ -739,16 +578,14 @@ const upgradeData = [
 
 ];
 
-
 function renderUpgrades() {
 
-  const container =
+  const list =
     $("upgradeList");
 
-  if (!container) return;
+  if (!list) return;
 
-
-  container.innerHTML =
+  list.innerHTML =
     upgradeData
       .map(
         ([type, icon, name, desc]) => {
@@ -758,13 +595,10 @@ function renderUpgrades() {
               state.upgrades[type] || 0
             );
 
-
           const cost =
             upgradeCost(type);
 
-
           return `
-
             <div class="item">
 
               <div class="item-icon">
@@ -785,21 +619,21 @@ function renderUpgrades() {
 
               <button
                 onclick="buyUpgrade('${type}')"
-                ${state.balance < cost
-                  ? "disabled"
-                  : ""}
+                ${
+                  state.balance < cost
+                    ? "disabled"
+                    : ""
+                }
               >
                 ${fmt(cost)} NOVA
               </button>
 
             </div>
-
           `;
         }
       )
       .join("");
 }
-
 
 window.buyUpgrade =
   type => {
@@ -811,9 +645,9 @@ window.buyUpgrade =
   };
 
 
-/* =========================================================
+/* =====================================================
    BOOSTS
-========================================================= */
+   ===================================================== */
 
 const boosts = [
 
@@ -849,59 +683,65 @@ const boosts = [
 
 ];
 
-
 function renderBoosts() {
 
-  const container =
+  const list =
     $("boostList");
 
-  if (!container) return;
+  if (!list) return;
 
-
-  container.innerHTML =
+  list.innerHTML =
     boosts
       .map(
-        ([id, icon, name, desc, mult, sec, cost]) => `
+        (
+          [
+            id,
+            icon,
+            name,
+            desc,
+            mult,
+            sec,
+            cost
+          ]
+        ) =>
+          `
+            <div class="boost">
 
-          <div class="boost">
+              <div class="boost-top">
 
-            <div class="boost-top">
+                <div class="boost-icon">
+                  ${icon}
+                </div>
 
-              <div class="boost-icon">
-                ${icon}
+                <b>
+                  ${fmt(cost)} NOVA
+                </b>
+
               </div>
 
-              <b>
-                ${fmt(cost)} NOVA
-              </b>
+              <h3>
+                ${name}
+              </h3>
+
+              <p>
+                ${desc}
+              </p>
+
+              <button
+                onclick="useBoost('${id}')"
+              >
+                ${
+                  id === "refill"
+                    ? "ACTIVATE"
+                    : "ACTIVATE BOOST"
+                }
+              </button>
 
             </div>
-
-            <h3>
-              ${name}
-            </h3>
-
-            <p>
-              ${desc}
-            </p>
-
-            <button
-              onclick="useBoost('${id}')"
-            >
-              ${
-                id === "refill"
-                  ? "ACTIVATE"
-                  : "ACTIVATE BOOST"
-              }
-            </button>
-
-          </div>
-
-        `
+          `
       )
       .join("");
 }
-
 
 window.useBoost =
   id => {
@@ -913,9 +753,9 @@ window.useBoost =
   };
 
 
-/* =========================================================
+/* =====================================================
    TASKS
-========================================================= */
+   ===================================================== */
 
 const tasks = [
 
@@ -925,7 +765,8 @@ const tasks = [
     "Daily Miner",
     "Mine 100 times today.",
     100,
-    () => state.taps >= 100
+    () =>
+      state.taps >= 100
   ],
 
   [
@@ -934,7 +775,8 @@ const tasks = [
     "Reach 5,000 NOVA",
     "Build your first serious stash.",
     300,
-    () => state.balance >= 5000
+    () =>
+      state.balance >= 5000
   ],
 
   [
@@ -953,31 +795,35 @@ const tasks = [
 
 ];
 
-
 function renderTasks() {
 
-  const container =
+  const list =
     $("taskList");
 
-  if (!container) return;
+  if (!list) return;
 
-
-  container.innerHTML =
+  list.innerHTML =
     tasks
       .map(
-        ([id, icon, name, desc, reward, done]) => {
+        (
+          [
+            id,
+            icon,
+            name,
+            desc,
+            reward,
+            done
+          ]
+        ) => {
 
           const claimed =
             state.claimedTasks
               .includes(id);
 
-
           const ready =
             done();
 
-
           return `
-
             <div class="item">
 
               <div class="item-icon">
@@ -991,18 +837,21 @@ function renderTasks() {
                 </b>
 
                 <small>
-                  ${desc} · +${reward} NOVA
+                  ${desc}
+                  · +${reward} NOVA
                 </small>
 
               </div>
 
               <button
                 onclick="claimTask('${id}')"
-                ${claimed || !ready
-                  ? "disabled"
-                  : ""}
+                ${
+                  claimed ||
+                  !ready
+                    ? "disabled"
+                    : ""
+                }
               >
-
                 ${
                   claimed
                     ? "CLAIMED"
@@ -1010,17 +859,14 @@ function renderTasks() {
                       ? "CLAIM"
                       : "LOCKED"
                 }
-
               </button>
 
             </div>
-
           `;
         }
       )
       .join("");
 }
-
 
 window.claimTask =
   id => {
@@ -1032,60 +878,42 @@ window.claimTask =
   };
 
 
-/* =========================================================
+/* =====================================================
    LEADERBOARD
-========================================================= */
+   ===================================================== */
 
 function renderLeaderboard() {
 
-  const container =
+  const list =
     $("leaderboard");
 
-  if (!container) return;
-
+  if (!list) return;
 
   const meName =
-    tg?.initDataUnsafe?.user?.first_name ||
+    tg?.initDataUnsafe
+      ?.user
+      ?.first_name ||
     "You";
 
-
   const names = [
-
     "NovaPilot",
-
     "AstroMiner",
-
     "LunarFox",
-
     "PixelDrill",
-
     "OrbitMax",
-
     "CosmoTap",
-
     "StarForge"
-
   ];
-
 
   const scores = [
-
     98200,
-
     76100,
-
     65300,
-
     52100,
-
     44400,
-
     39100,
-
     31200
-
   ];
-
 
   const rows =
     names.map(
@@ -1095,159 +923,138 @@ function renderLeaderboard() {
       })
     );
 
-
   rows.push({
     n: meName,
     score: state.balance
   });
-
 
   rows.sort(
     (a, b) =>
       b.score - a.score
   );
 
-
-  container.innerHTML =
+  list.innerHTML =
     rows
       .slice(0, 10)
       .map(
-        (r, i) => `
+        (r, i) =>
+          `
+            <div class="rank-row">
 
-          <div class="rank-row">
+              <div class="rank-num">
+                ${i + 1}
+              </div>
 
-            <div class="rank-num">
-              ${i + 1}
-            </div>
-
-            <div class="rank-avatar">
-
-              ${
-                i < 3
-                  ? ["🥇", "🥈", "🥉"][i]
-                  : "⛏️"
-              }
-
-            </div>
-
-            <div class="rank-user">
-
-              <b>
-                ${escapeHtml(r.n)}
-              </b>
-
-              <small>
+              <div class="rank-avatar">
                 ${
                   i < 3
-                    ? "Elite miner"
-                    : "Miner"
+                    ? ["🥇", "🥈", "🥉"][i]
+                    : "⛏️"
                 }
-              </small>
+              </div>
+
+              <div class="rank-user">
+
+                <b>
+                  ${escapeHtml(r.n)}
+                </b>
+
+                <small>
+                  ${
+                    i < 3
+                      ? "Elite miner"
+                      : "Miner"
+                  }
+                </small>
+
+              </div>
+
+              <div class="rank-score">
+                ${fmt(r.score)}
+              </div>
 
             </div>
-
-            <div class="rank-score">
-              ${fmt(r.score)}
-            </div>
-
-          </div>
-
-        `
+          `
       )
       .join("");
 }
-
 
 function escapeHtml(s) {
 
   return String(s).replace(
     /[&<>"']/g,
-    c => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;"
-    }[c])
+    c =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      })[c]
   );
-
 }
 
 
-/* =========================================================
-   SCREEN NAVIGATION
-========================================================= */
+/* =====================================================
+   SCREENS / NAVIGATION
+   ===================================================== */
 
 function openScreen(id) {
 
   document
     .querySelectorAll(".screen")
-    .forEach(x => {
-
-      x.classList.toggle(
-        "active",
-        x.id === id
-      );
-
-    });
-
+    .forEach(
+      x =>
+        x.classList.toggle(
+          "active",
+          x.id === id
+        )
+    );
 
   document
     .querySelectorAll(".nav")
-    .forEach(x => {
-
-      x.classList.toggle(
-        "active",
-        x.dataset.go === id
-      );
-
-    });
-
+    .forEach(
+      x =>
+        x.classList.toggle(
+          "active",
+          x.dataset.go === id
+        )
+    );
 
   if (id === "tasks") {
-
     renderTasks();
-
   }
 }
 
-
 document
   .querySelectorAll("[data-go]")
-  .forEach(b => {
-
-    b.addEventListener(
-      "click",
-      () => {
-
-        openScreen(
-          b.dataset.go
-        );
-
-      }
-    );
-
-  });
+  .forEach(
+    b =>
+      b.addEventListener(
+        "click",
+        () =>
+          openScreen(
+            b.dataset.go
+          )
+      )
+  );
 
 
-/* =========================================================
+/* =====================================================
    PROFILE
-========================================================= */
+   ===================================================== */
 
 function profile() {
 
   const u =
     tg?.initDataUnsafe?.user;
 
-
   if ($("profileName")) {
 
     $("profileName").textContent =
       u?.first_name ||
       "Miner";
-
   }
-
 
   if ($("profileUsername")) {
 
@@ -1255,9 +1062,7 @@ function profile() {
       u?.username
         ? "@" + u.username
         : "Telegram Miner";
-
   }
-
 
   if ($("profileAvatar")) {
 
@@ -1265,39 +1070,32 @@ function profile() {
       u?.emoji_status_custom_emoji_id
         ? "✦"
         : "👤";
-
   }
-
 
   if ($("profileModal")) {
 
     $("profileModal")
-      .classList.remove("hidden");
-
+      .classList.remove(
+        "hidden"
+      );
   }
 }
-
 
 if ($("profileBtn")) {
 
   $("profileBtn").onclick =
     profile;
-
 }
-
 
 if ($("closeModal")) {
 
   $("closeModal").onclick =
-    () => {
-
+    () =>
       $("profileModal")
-        ?.classList.add("hidden");
-
-    };
-
+        ?.classList.add(
+          "hidden"
+        );
 }
-
 
 if ($("profileModal")) {
 
@@ -1310,38 +1108,29 @@ if ($("profileModal")) {
       ) {
 
         $("profileModal")
-          .classList.add("hidden");
-
+          .classList.add(
+            "hidden"
+          );
       }
-
     };
-
 }
 
 
-/* =========================================================
-   REFERRAL LINK
-========================================================= */
+/* =====================================================
+   INVITE
+   ===================================================== */
 
 function inviteLink() {
 
-  /*
-    IMPORTANT:
-    Do NOT include @ in the username.
-  */
-
   const bot =
-    "MineNovaGameBot";
-
+    "YOUR_BOT_USERNAME";
 
   if ($("inviteLink")) {
 
     $("inviteLink").textContent =
       `https://t.me/${bot}?start=ref_demo`;
-
   }
 }
-
 
 if ($("copyInvite")) {
 
@@ -1350,39 +1139,36 @@ if ($("copyInvite")) {
 
       try {
 
-        await navigator.clipboard.writeText(
-          $("inviteLink").textContent
-        );
-
+        await navigator.clipboard
+          .writeText(
+            $("inviteLink")
+              .textContent
+          );
 
         toast(
           "Invite link copied"
         );
-
 
       } catch (e) {
 
         toast(
           "Copy failed"
         );
-
       }
-
     };
-
 }
 
 
-/* =========================================================
+/* =====================================================
    BOOST TIMER
-========================================================= */
+   ===================================================== */
 
 setInterval(() => {
 
   if (
     state.boost.until &&
     Date.now() >
-    state.boost.until
+      state.boost.until
   ) {
 
     state.boost = {
@@ -1390,17 +1176,15 @@ setInterval(() => {
       until: 0
     };
 
-
     render();
-
   }
 
 }, 1000);
 
 
-/* =========================================================
+/* =====================================================
    START APP
-========================================================= */
+   ===================================================== */
 
 inviteLink();
 
